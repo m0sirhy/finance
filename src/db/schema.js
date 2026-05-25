@@ -34,6 +34,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_categories_server_updated_at
     ON categories(server_updated_at);
 
+  CREATE TABLE IF NOT EXISTS counterparties (
+    id                 TEXT PRIMARY KEY,
+    name               TEXT NOT NULL,
+    phone              TEXT,
+    email              TEXT,
+    notes              TEXT,
+    -- 0 = supplier, 1 = customer, 2 = both
+    type               INTEGER NOT NULL DEFAULT 2,
+    user_id            TEXT NOT NULL REFERENCES users(id),
+    deleted_at         TEXT,
+    updated_at         TEXT NOT NULL,
+    server_updated_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_counterparties_server_updated_at
+    ON counterparties(server_updated_at);
+
   CREATE TABLE IF NOT EXISTS transactions (
     id                 TEXT PRIMARY KEY,
     type               INTEGER NOT NULL,
@@ -41,6 +57,7 @@ db.exec(`
     currency           TEXT NOT NULL,
     category_id        TEXT NOT NULL REFERENCES categories(id),
     counterparty       TEXT,
+    counterparty_id    TEXT REFERENCES counterparties(id),
     date               TEXT NOT NULL,
     payment_method     INTEGER NOT NULL,
     reference_number   TEXT,
@@ -55,3 +72,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_transactions_server_updated_at
     ON transactions(server_updated_at);
 `);
+
+// Idempotent column additions for existing DBs (added after initial release).
+function addColumnIfMissing(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+addColumnIfMissing('transactions', 'counterparty_id', 'TEXT REFERENCES counterparties(id)');

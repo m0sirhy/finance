@@ -19,6 +19,17 @@ const categorySchema = z.object({
   updatedAt: z.string(),
 });
 
+const counterpartySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  phone: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  type: z.number().int().min(0).max(2).default(2),
+  deletedAt: z.string().nullable().optional(),
+  updatedAt: z.string(),
+});
+
 const transactionSchema = z.object({
   id: z.string().min(1),
   type: z.number().int().min(0).max(1),
@@ -26,6 +37,7 @@ const transactionSchema = z.object({
   currency: z.string().length(3),
   categoryId: z.string().min(1),
   counterparty: z.string().nullable().optional(),
+  counterpartyId: z.string().nullable().optional(),
   date: z.string(),
   paymentMethod: z.number().int(),
   referenceNumber: z.string().nullable().optional(),
@@ -38,6 +50,7 @@ const transactionSchema = z.object({
 
 const pushSchema = z.object({
   categories: z.array(categorySchema).default([]),
+  counterparties: z.array(counterpartySchema).default([]),
   transactions: z.array(transactionSchema).default([]),
 });
 
@@ -57,6 +70,21 @@ function rowToCategory(r) {
   };
 }
 
+function rowToCounterparty(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    phone: r.phone,
+    email: r.email,
+    notes: r.notes,
+    type: r.type,
+    userId: r.user_id,
+    deletedAt: r.deleted_at,
+    updatedAt: r.updated_at,
+    serverUpdatedAt: r.server_updated_at,
+  };
+}
+
 function rowToTransaction(r) {
   return {
     id: r.id,
@@ -65,6 +93,7 @@ function rowToTransaction(r) {
     currency: r.currency,
     categoryId: r.category_id,
     counterparty: r.counterparty,
+    counterpartyId: r.counterparty_id,
     date: r.date,
     paymentMethod: r.payment_method,
     referenceNumber: r.reference_number,
@@ -81,6 +110,9 @@ function rowToTransaction(r) {
 const selectCategoriesSince = db.prepare(
   `SELECT * FROM categories WHERE server_updated_at > ? ORDER BY server_updated_at`,
 );
+const selectCounterpartiesSince = db.prepare(
+  `SELECT * FROM counterparties WHERE server_updated_at > ? ORDER BY server_updated_at`,
+);
 const selectTransactionsSince = db.prepare(
   `SELECT * FROM transactions WHERE server_updated_at > ? ORDER BY server_updated_at`,
 );
@@ -90,6 +122,7 @@ router.get('/pull', (req, res) => {
   res.json({
     serverNow: new Date().toISOString(),
     categories: selectCategoriesSince.all(since).map(rowToCategory),
+    counterparties: selectCounterpartiesSince.all(since).map(rowToCounterparty),
     transactions: selectTransactionsSince.all(since).map(rowToTransaction),
   });
 });
@@ -114,22 +147,44 @@ const upsertCategory = db.prepare(`
     server_updated_at = excluded.server_updated_at
 `);
 
+const selectCounterpartyById = db.prepare(
+  'SELECT updated_at FROM counterparties WHERE id = ?',
+);
+const upsertCounterparty = db.prepare(`
+  INSERT INTO counterparties
+    (id, name, phone, email, notes, type,
+     user_id, deleted_at, updated_at, server_updated_at)
+  VALUES
+    (@id, @name, @phone, @email, @notes, @type,
+     @user_id, @deleted_at, @updated_at, @server_updated_at)
+  ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    phone = excluded.phone,
+    email = excluded.email,
+    notes = excluded.notes,
+    type = excluded.type,
+    deleted_at = excluded.deleted_at,
+    updated_at = excluded.updated_at,
+    server_updated_at = excluded.server_updated_at
+`);
+
 const selectTxById = db.prepare('SELECT updated_at FROM transactions WHERE id = ?');
 const upsertTransaction = db.prepare(`
   INSERT INTO transactions
-    (id, type, amount, currency, category_id, counterparty, date, payment_method,
-     reference_number, notes, receipt_path, user_id, deleted_at,
-     created_at, updated_at, server_updated_at)
+    (id, type, amount, currency, category_id, counterparty, counterparty_id,
+     date, payment_method, reference_number, notes, receipt_path,
+     user_id, deleted_at, created_at, updated_at, server_updated_at)
   VALUES
-    (@id, @type, @amount, @currency, @category_id, @counterparty, @date, @payment_method,
-     @reference_number, @notes, @receipt_path, @user_id, @deleted_at,
-     @created_at, @updated_at, @server_updated_at)
+    (@id, @type, @amount, @currency, @category_id, @counterparty, @counterparty_id,
+     @date, @payment_method, @reference_number, @notes, @receipt_path,
+     @user_id, @deleted_at, @created_at, @updated_at, @server_updated_at)
   ON CONFLICT(id) DO UPDATE SET
     type = excluded.type,
     amount = excluded.amount,
     currency = excluded.currency,
     category_id = excluded.category_id,
     counterparty = excluded.counterparty,
+    counterparty_id = excluded.counterparty_id,
     date = excluded.date,
     payment_method = excluded.payment_method,
     reference_number = excluded.reference_number,
@@ -143,6 +198,9 @@ const upsertTransaction = db.prepare(`
 const selectCategoryStamp = db.prepare(
   'SELECT server_updated_at FROM categories WHERE id = ?',
 );
+const selectCounterpartyStamp = db.prepare(
+  'SELECT server_updated_at FROM counterparties WHERE id = ?',
+);
 const selectTxStamp = db.prepare(
   'SELECT server_updated_at FROM transactions WHERE id = ?',
 );
@@ -152,11 +210,11 @@ router.post('/push', (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: 'invalid_body', issues: parsed.error.issues });
   }
-  const { categories, transactions } = parsed.data;
+  const { categories, counterparties, transactions } = parsed.data;
   const serverNow = new Date().toISOString();
   const userId = req.user.id;
 
-  const applied = { categories: [], transactions: [] };
+  const applied = { categories: [], counterparties: [], transactions: [] };
 
   const tx = db.transaction(() => {
     for (const c of categories) {
@@ -182,6 +240,28 @@ router.post('/push', (req, res) => {
       applied.categories.push({ id: c.id, status: 'applied', serverUpdatedAt: serverNow });
     }
 
+    for (const cp of counterparties) {
+      const existing = selectCounterpartyById.get(cp.id);
+      if (existing && existing.updated_at >= cp.updatedAt) {
+        const stamp = selectCounterpartyStamp.get(cp.id).server_updated_at;
+        applied.counterparties.push({ id: cp.id, status: 'skipped', serverUpdatedAt: stamp });
+        continue;
+      }
+      upsertCounterparty.run({
+        id: cp.id,
+        name: cp.name,
+        phone: cp.phone ?? null,
+        email: cp.email ?? null,
+        notes: cp.notes ?? null,
+        type: cp.type,
+        user_id: userId,
+        deleted_at: cp.deletedAt ?? null,
+        updated_at: cp.updatedAt,
+        server_updated_at: serverNow,
+      });
+      applied.counterparties.push({ id: cp.id, status: 'applied', serverUpdatedAt: serverNow });
+    }
+
     for (const t of transactions) {
       const existing = selectTxById.get(t.id);
       if (existing && existing.updated_at >= t.updatedAt) {
@@ -196,6 +276,7 @@ router.post('/push', (req, res) => {
         currency: t.currency,
         category_id: t.categoryId,
         counterparty: t.counterparty ?? null,
+        counterparty_id: t.counterpartyId ?? null,
         date: t.date,
         payment_method: t.paymentMethod,
         reference_number: t.referenceNumber ?? null,

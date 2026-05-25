@@ -44,8 +44,9 @@ async function main() {
   ok('register B', bReg.status === 201, `status=${bReg.status}`);
   const bTok = bReg.data.token;
 
-  // 2. As A, push 1 category + 1 transaction
+  // 2. As A, push 1 category + 1 counterparty + 1 transaction linked to the counterparty
   const catId = randomUUID();
+  const cpId = randomUUID();
   const txId = randomUUID();
   const t0 = new Date().toISOString();
   const push1 = await call('/sync/push', {
@@ -56,21 +57,30 @@ async function main() {
         id: catId, nameAr: 'طعام', nameEn: 'Food', icon: '🍔',
         color: 0xFFFF5733, type: 1, isDefault: true, updatedAt: t0,
       }],
+      counterparties: [{
+        id: cpId, name: 'سوبر ماركت الفجر', phone: '0599-111-222', type: 0,
+        updatedAt: t0,
+      }],
       transactions: [{
         id: txId, type: 1, amount: 25.5, currency: 'ILS', categoryId: catId,
+        counterpartyId: cpId,
         date: t0, paymentMethod: 0, createdAt: t0, updatedAt: t0,
       }],
     },
   });
-  ok('A push category+tx', push1.status === 200
+  ok('A push cat+counterparty+tx', push1.status === 200
     && push1.data.applied.categories[0]?.status === 'applied'
+    && push1.data.applied.counterparties[0]?.status === 'applied'
     && push1.data.applied.transactions[0]?.status === 'applied',
     `status=${push1.status}`);
 
-  // 3. As B, pull from epoch — should see both
+  // 3. As B, pull from epoch — should see everything A pushed
   const pullB = await call('/sync/pull', { token: bTok });
   ok('B pull sees A\'s category', pullB.data.categories.some(c => c.id === catId));
+  ok('B pull sees A\'s counterparty', pullB.data.counterparties.some(c => c.id === cpId));
   ok('B pull sees A\'s transaction', pullB.data.transactions.some(t => t.id === txId));
+  ok('B sees counterpartyId on tx',
+    pullB.data.transactions.find(t => t.id === txId)?.counterpartyId === cpId);
   ok('userId stamped from JWT', pullB.data.transactions[0]?.userId === aId);
 
   // 4. As B, push an update to the transaction with NEWER updatedAt
