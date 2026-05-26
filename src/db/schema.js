@@ -50,6 +50,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_counterparties_server_updated_at
     ON counterparties(server_updated_at);
 
+  CREATE TABLE IF NOT EXISTS invoices (
+    id                 TEXT PRIMARY KEY,
+    counterparty_id    TEXT NOT NULL REFERENCES counterparties(id),
+    -- 0 = issued (AR — customer owes me), 1 = received (AP — I owe supplier)
+    direction          INTEGER NOT NULL,
+    number             TEXT,
+    date               TEXT NOT NULL,
+    due_date           TEXT,
+    total              REAL NOT NULL,
+    currency           TEXT NOT NULL,
+    notes              TEXT,
+    user_id            TEXT NOT NULL REFERENCES users(id),
+    deleted_at         TEXT,
+    updated_at         TEXT NOT NULL,
+    server_updated_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_invoices_server_updated_at
+    ON invoices(server_updated_at);
+  CREATE INDEX IF NOT EXISTS idx_invoices_counterparty
+    ON invoices(counterparty_id);
+
   CREATE TABLE IF NOT EXISTS transactions (
     id                 TEXT PRIMARY KEY,
     type               INTEGER NOT NULL,
@@ -58,6 +79,7 @@ db.exec(`
     category_id        TEXT NOT NULL REFERENCES categories(id),
     counterparty       TEXT,
     counterparty_id    TEXT REFERENCES counterparties(id),
+    invoice_id         TEXT REFERENCES invoices(id),
     date               TEXT NOT NULL,
     payment_method     INTEGER NOT NULL,
     reference_number   TEXT,
@@ -81,3 +103,4 @@ function addColumnIfMissing(table, column, definition) {
 }
 
 addColumnIfMissing('transactions', 'counterparty_id', 'TEXT REFERENCES counterparties(id)');
+addColumnIfMissing('transactions', 'invoice_id', 'TEXT REFERENCES invoices(id)');

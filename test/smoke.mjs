@@ -74,6 +74,37 @@ async function main() {
     && push1.data.applied.transactions[0]?.status === 'applied',
     `status=${push1.status}`);
 
+  // 2b. Invoice round-trip — A creates an issued invoice, links a payment to it
+  const invId = randomUUID();
+  const payTxId = randomUUID();
+  const pushInv = await call('/sync/push', {
+    method: 'POST',
+    token: aTok,
+    body: {
+      invoices: [{
+        id: invId, counterpartyId: cpId, direction: 0,
+        number: 'INV-001', date: t0, total: 500, currency: 'ILS',
+        updatedAt: t0,
+      }],
+      transactions: [{
+        id: payTxId, type: 0, amount: 200, currency: 'ILS', categoryId: catId,
+        counterpartyId: cpId, invoiceId: invId,
+        date: t0, paymentMethod: 0, createdAt: t0, updatedAt: t0,
+      }],
+    },
+  });
+  ok('A push invoice + linked payment',
+    pushInv.data.applied.invoices[0]?.status === 'applied'
+    && pushInv.data.applied.transactions[0]?.status === 'applied',
+    `status=${pushInv.status}`);
+
+  const pullInv = await call('/sync/pull', { token: bTok });
+  const pulledInv = pullInv.data.invoices.find(i => i.id === invId);
+  ok('B pull sees invoice', pulledInv != null
+    && pulledInv.total === 500 && pulledInv.direction === 0);
+  const pulledPay = pullInv.data.transactions.find(t => t.id === payTxId);
+  ok('B sees invoiceId linkage on payment', pulledPay?.invoiceId === invId);
+
   // 3. As B, pull from epoch — should see everything A pushed
   const pullB = await call('/sync/pull', { token: bTok });
   ok('B pull sees A\'s category', pullB.data.categories.some(c => c.id === catId));
