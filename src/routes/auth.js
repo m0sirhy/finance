@@ -40,11 +40,18 @@ router.post('/register', async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 12);
   const createdAt = new Date().toISOString();
 
-  db.prepare(
-    'INSERT INTO users (id, email, password_hash, name, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(id, email, passwordHash, name, createdAt);
+  // Bootstrap: the very first account is the admin and is active immediately.
+  // Everyone after that registers as `pending` until an admin approves them.
+  const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  const isFirst = userCount === 0;
+  const role = isFirst ? 'admin' : null;
+  const status = isFirst ? 'active' : 'pending';
 
-  const user = { id, email, name, createdAt };
+  db.prepare(
+    'INSERT INTO users (id, email, password_hash, name, created_at, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(id, email, passwordHash, name, createdAt, role, status);
+
+  const user = { id, email, name, createdAt, role, status };
   res.status(201).json({ user, token: signToken(user) });
 });
 
@@ -56,23 +63,39 @@ router.post('/login', async (req, res) => {
   const { email, password } = parsed.data;
 
   const row = db
-    .prepare('SELECT id, email, password_hash, name, created_at FROM users WHERE email = ?')
+    .prepare('SELECT id, email, password_hash, name, created_at, role, status FROM users WHERE email = ?')
     .get(email);
   if (!row) return res.status(401).json({ error: 'invalid_credentials' });
 
   const ok = await bcrypt.compare(password, row.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
-  const user = { id: row.id, email: row.email, name: row.name, createdAt: row.created_at };
+  const user = {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    createdAt: row.created_at,
+    role: row.role,
+    status: row.status,
+  };
   res.json({ user, token: signToken(user) });
 });
 
 router.get('/me', requireAuth, (req, res) => {
   const row = db
-    .prepare('SELECT id, email, name, created_at FROM users WHERE id = ?')
+    .prepare('SELECT id, email, name, created_at, role, status FROM users WHERE id = ?')
     .get(req.user.id);
   if (!row) return res.status(404).json({ error: 'user_not_found' });
-  res.json({ user: { id: row.id, email: row.email, name: row.name, createdAt: row.created_at } });
+  res.json({
+    user: {
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      createdAt: row.created_at,
+      role: row.role,
+      status: row.status,
+    },
+  });
 });
 
 export default router;

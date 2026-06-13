@@ -6,6 +6,7 @@ import './db/schema.js';
 import authRouter from './routes/auth.js';
 import syncRouter from './routes/sync.js';
 import receiptsRouter from './routes/receipts.js';
+import usersRouter from './routes/users.js';
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET is required (copy .env.example to .env and fill it in)');
@@ -23,6 +24,7 @@ app.get('/health', (_req, res) => {
 app.use('/auth', authRouter);
 app.use('/sync', syncRouter);
 app.use('/receipts', receiptsRouter);
+app.use('/users', usersRouter);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

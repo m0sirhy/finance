@@ -96,10 +96,12 @@ db.exec(`
 `);
 
 // Idempotent column additions for existing DBs (added after initial release).
+// Returns true if the column was actually added (so one-time backfills can run).
 function addColumnIfMissing(table, column, definition) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (cols.some((c) => c.name === column)) return;
+  if (cols.some((c) => c.name === column)) return false;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
 }
 
 addColumnIfMissing('transactions', 'counterparty_id', 'TEXT REFERENCES counterparties(id)');
@@ -138,3 +140,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_cycle_opening_balances_cycle
     ON cycle_opening_balances(cycle_id);
 `);
+
+// ── Users: roles & status (added 2026-06-13) ──────────────────────────────
+// role:   admin | editor | viewer   (NULL until an admin approves)
+// status: pending | active | disabled
+addColumnIfMissing('users', 'role', 'TEXT');
+const statusAdded = addColumnIfMissing('users', 'status', "TEXT NOT NULL DEFAULT 'pending'");
+
+// One-time backfill the moment `status` is introduced: every PRE-EXISTING
+// account keeps full access (so nobody is locked out), and exactly one admin
+// is guaranteed. New accounts created AFTER this run register as `pending`.
+if (statusAdded) {
+  db.exec("UPDATE users SET status = 'active'");
+  db.exec("UPDATE users SET role = 'editor' WHERE role IS NULL");
+  // Prefer an explicit ADMIN_EMAIL; otherwise promote the earliest account.
+  const adminEmail = (process.env.ADMIN_EMAIL ?? '').toLowerCase().trim();
+  let admin = adminEmail
+    ? db.prepare('SELECT id FROM users WHERE email = ?').get(adminEmail)
+    : null;
+  if (!admin) admin = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+  if (admin) db.prepare("UPDATE users SET role = 'admin', status = 'active' WHERE id = ?").run(admin.id);
+}
+
+// Safety net for every boot: never leave the system with zero active admins
+// (e.g. if an admin was demoted by mistake) — re-promote the earliest account.
+const hasAdmin = db.prepare("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1").get();
+if (!hasAdmin) {
+  const earliest = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+  if (earliest) db.prepare("UPDATE users SET role = 'admin', status = 'active' WHERE id = ?").run(earliest.id);
+}

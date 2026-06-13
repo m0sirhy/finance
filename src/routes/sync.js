@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import { db } from '../db/schema.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireActive, requireRole } from '../middleware/auth.js';
 
 const router = Router();
-router.use(requireAuth);
+// Every sync route needs an authenticated, approved (active) account. Viewers
+// are active too — their write attempts are blocked per-route below.
+router.use(requireAuth, requireActive);
 
 const categorySchema = z.object({
   id: z.string().min(1),
@@ -377,7 +379,8 @@ const selectOpeningBalanceStamp = db.prepare(
   'SELECT server_updated_at FROM cycle_opening_balances WHERE id = ?',
 );
 
-router.post('/push', (req, res) => {
+// Writes are restricted to admins and editors; viewers get 403.
+router.post('/push', requireRole('admin', 'editor'), (req, res) => {
   const parsed = pushSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'invalid_body', issues: parsed.error.issues });
