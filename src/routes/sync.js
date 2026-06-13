@@ -63,11 +63,34 @@ const transactionSchema = z.object({
   updatedAt: z.string(),
 });
 
+const cycleSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().nullable().optional(),
+  startDate: z.string(),
+  closedAt: z.string().nullable().optional(),
+  status: z.number().int().min(0).max(1),
+  createdAt: z.string(),
+  deletedAt: z.string().nullable().optional(),
+  updatedAt: z.string(),
+});
+
+const cycleOpeningBalanceSchema = z.object({
+  id: z.string().min(1),
+  cycleId: z.string().min(1),
+  counterpartyId: z.string().min(1),
+  openingAr: z.number(),
+  openingAp: z.number(),
+  deletedAt: z.string().nullable().optional(),
+  updatedAt: z.string(),
+});
+
 const pushSchema = z.object({
   categories: z.array(categorySchema).default([]),
   counterparties: z.array(counterpartySchema).default([]),
   invoices: z.array(invoiceSchema).default([]),
   transactions: z.array(transactionSchema).default([]),
+  cycles: z.array(cycleSchema).default([]),
+  cycleOpeningBalances: z.array(cycleOpeningBalanceSchema).default([]),
 });
 
 function rowToCategory(r) {
@@ -142,6 +165,35 @@ function rowToTransaction(r) {
   };
 }
 
+function rowToCycle(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    startDate: r.start_date,
+    closedAt: r.closed_at,
+    status: r.status,
+    createdAt: r.created_at,
+    userId: r.user_id,
+    deletedAt: r.deleted_at,
+    updatedAt: r.updated_at,
+    serverUpdatedAt: r.server_updated_at,
+  };
+}
+
+function rowToOpeningBalance(r) {
+  return {
+    id: r.id,
+    cycleId: r.cycle_id,
+    counterpartyId: r.counterparty_id,
+    openingAr: r.opening_ar,
+    openingAp: r.opening_ap,
+    userId: r.user_id,
+    deletedAt: r.deleted_at,
+    updatedAt: r.updated_at,
+    serverUpdatedAt: r.server_updated_at,
+  };
+}
+
 const selectCategoriesSince = db.prepare(
   `SELECT * FROM categories WHERE server_updated_at > ? ORDER BY server_updated_at`,
 );
@@ -154,6 +206,12 @@ const selectInvoicesSince = db.prepare(
 const selectTransactionsSince = db.prepare(
   `SELECT * FROM transactions WHERE server_updated_at > ? ORDER BY server_updated_at`,
 );
+const selectCyclesSince = db.prepare(
+  `SELECT * FROM accounting_cycles WHERE server_updated_at > ? ORDER BY server_updated_at`,
+);
+const selectOpeningBalancesSince = db.prepare(
+  `SELECT * FROM cycle_opening_balances WHERE server_updated_at > ? ORDER BY server_updated_at`,
+);
 
 router.get('/pull', (req, res) => {
   const since = typeof req.query.since === 'string' ? req.query.since : '1970-01-01T00:00:00.000Z';
@@ -163,6 +221,8 @@ router.get('/pull', (req, res) => {
     counterparties: selectCounterpartiesSince.all(since).map(rowToCounterparty),
     invoices: selectInvoicesSince.all(since).map(rowToInvoice),
     transactions: selectTransactionsSince.all(since).map(rowToTransaction),
+    cycles: selectCyclesSince.all(since).map(rowToCycle),
+    cycleOpeningBalances: selectOpeningBalancesSince.all(since).map(rowToOpeningBalance),
   });
 });
 
@@ -259,6 +319,45 @@ const upsertTransaction = db.prepare(`
     server_updated_at = excluded.server_updated_at
 `);
 
+const selectCycleById = db.prepare('SELECT updated_at FROM accounting_cycles WHERE id = ?');
+const upsertCycle = db.prepare(`
+  INSERT INTO accounting_cycles
+    (id, name, start_date, closed_at, status, created_at,
+     user_id, deleted_at, updated_at, server_updated_at)
+  VALUES
+    (@id, @name, @start_date, @closed_at, @status, @created_at,
+     @user_id, @deleted_at, @updated_at, @server_updated_at)
+  ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    start_date = excluded.start_date,
+    closed_at = excluded.closed_at,
+    status = excluded.status,
+    created_at = excluded.created_at,
+    deleted_at = excluded.deleted_at,
+    updated_at = excluded.updated_at,
+    server_updated_at = excluded.server_updated_at
+`);
+
+const selectOpeningBalanceById = db.prepare(
+  'SELECT updated_at FROM cycle_opening_balances WHERE id = ?',
+);
+const upsertOpeningBalance = db.prepare(`
+  INSERT INTO cycle_opening_balances
+    (id, cycle_id, counterparty_id, opening_ar, opening_ap,
+     user_id, deleted_at, updated_at, server_updated_at)
+  VALUES
+    (@id, @cycle_id, @counterparty_id, @opening_ar, @opening_ap,
+     @user_id, @deleted_at, @updated_at, @server_updated_at)
+  ON CONFLICT(id) DO UPDATE SET
+    cycle_id = excluded.cycle_id,
+    counterparty_id = excluded.counterparty_id,
+    opening_ar = excluded.opening_ar,
+    opening_ap = excluded.opening_ap,
+    deleted_at = excluded.deleted_at,
+    updated_at = excluded.updated_at,
+    server_updated_at = excluded.server_updated_at
+`);
+
 const selectCategoryStamp = db.prepare(
   'SELECT server_updated_at FROM categories WHERE id = ?',
 );
@@ -271,13 +370,19 @@ const selectInvoiceStamp = db.prepare(
 const selectTxStamp = db.prepare(
   'SELECT server_updated_at FROM transactions WHERE id = ?',
 );
+const selectCycleStamp = db.prepare(
+  'SELECT server_updated_at FROM accounting_cycles WHERE id = ?',
+);
+const selectOpeningBalanceStamp = db.prepare(
+  'SELECT server_updated_at FROM cycle_opening_balances WHERE id = ?',
+);
 
 router.post('/push', (req, res) => {
   const parsed = pushSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'invalid_body', issues: parsed.error.issues });
   }
-  const { categories, counterparties, invoices, transactions } = parsed.data;
+  const { categories, counterparties, invoices, transactions, cycles, cycleOpeningBalances } = parsed.data;
   const serverNow = new Date().toISOString();
   const userId = req.user.id;
 
@@ -286,6 +391,8 @@ router.post('/push', (req, res) => {
     counterparties: [],
     invoices: [],
     transactions: [],
+    cycles: [],
+    cycleOpeningBalances: [],
   };
 
   const tx = db.transaction(() => {
@@ -387,6 +494,51 @@ router.post('/push', (req, res) => {
         server_updated_at: serverNow,
       });
       applied.transactions.push({ id: t.id, status: 'applied', serverUpdatedAt: serverNow });
+    }
+
+    // Cycles before opening balances (the latter FK-reference both cycles
+    // and counterparties, which are inserted earlier in this transaction).
+    for (const cy of cycles) {
+      const existing = selectCycleById.get(cy.id);
+      if (existing && existing.updated_at >= cy.updatedAt) {
+        const stamp = selectCycleStamp.get(cy.id).server_updated_at;
+        applied.cycles.push({ id: cy.id, status: 'skipped', serverUpdatedAt: stamp });
+        continue;
+      }
+      upsertCycle.run({
+        id: cy.id,
+        name: cy.name ?? null,
+        start_date: cy.startDate,
+        closed_at: cy.closedAt ?? null,
+        status: cy.status,
+        created_at: cy.createdAt,
+        user_id: userId,
+        deleted_at: cy.deletedAt ?? null,
+        updated_at: cy.updatedAt,
+        server_updated_at: serverNow,
+      });
+      applied.cycles.push({ id: cy.id, status: 'applied', serverUpdatedAt: serverNow });
+    }
+
+    for (const ob of cycleOpeningBalances) {
+      const existing = selectOpeningBalanceById.get(ob.id);
+      if (existing && existing.updated_at >= ob.updatedAt) {
+        const stamp = selectOpeningBalanceStamp.get(ob.id).server_updated_at;
+        applied.cycleOpeningBalances.push({ id: ob.id, status: 'skipped', serverUpdatedAt: stamp });
+        continue;
+      }
+      upsertOpeningBalance.run({
+        id: ob.id,
+        cycle_id: ob.cycleId,
+        counterparty_id: ob.counterpartyId,
+        opening_ar: ob.openingAr,
+        opening_ap: ob.openingAp,
+        user_id: userId,
+        deleted_at: ob.deletedAt ?? null,
+        updated_at: ob.updatedAt,
+        server_updated_at: serverNow,
+      });
+      applied.cycleOpeningBalances.push({ id: ob.id, status: 'applied', serverUpdatedAt: serverNow });
     }
   });
   tx();

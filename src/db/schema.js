@@ -104,3 +104,37 @@ function addColumnIfMissing(table, column, definition) {
 
 addColumnIfMissing('transactions', 'counterparty_id', 'TEXT REFERENCES counterparties(id)');
 addColumnIfMissing('transactions', 'invoice_id', 'TEXT REFERENCES invoices(id)');
+
+// ── Accounting cycles (added 2026-06-13) ──────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS accounting_cycles (
+    id                 TEXT PRIMARY KEY,
+    name               TEXT,
+    start_date         TEXT NOT NULL,
+    closed_at          TEXT,
+    status             INTEGER NOT NULL DEFAULT 0,
+    created_at         TEXT NOT NULL,
+    user_id            TEXT NOT NULL REFERENCES users(id),
+    deleted_at         TEXT,
+    updated_at         TEXT NOT NULL,
+    server_updated_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_accounting_cycles_server_updated_at
+    ON accounting_cycles(server_updated_at);
+
+  CREATE TABLE IF NOT EXISTS cycle_opening_balances (
+    id                 TEXT PRIMARY KEY,
+    cycle_id           TEXT NOT NULL REFERENCES accounting_cycles(id),
+    counterparty_id    TEXT NOT NULL REFERENCES counterparties(id),
+    opening_ar         REAL NOT NULL DEFAULT 0,
+    opening_ap         REAL NOT NULL DEFAULT 0,
+    user_id            TEXT NOT NULL REFERENCES users(id),
+    deleted_at         TEXT,
+    updated_at         TEXT NOT NULL,
+    server_updated_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_cycle_opening_balances_server_updated_at
+    ON cycle_opening_balances(server_updated_at);
+  CREATE INDEX IF NOT EXISTS idx_cycle_opening_balances_cycle
+    ON cycle_opening_balances(cycle_id);
+`);
