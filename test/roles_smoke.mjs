@@ -76,6 +76,34 @@ const main = async () => {
   const demote = await api(`/users/${adminId}`, { method: 'PATCH', token: adminTok, body: { role: 'editor' } });
   check('last admin cannot be demoted (409 last_admin)', demote.status === 409 && demote.data?.error === 'last_admin');
 
+  // 10. Data-entry role: may create new records but not modify existing ones.
+  await api(`/users/${bobId}`, { method: 'PATCH', token: adminTok, body: { role: 'entry' } });
+  const cat = {
+    id: 'cat_entry_1', nameAr: 'ت', nameEn: 'T', icon: 'x', color: 1, type: 1,
+    updatedAt: new Date().toISOString(),
+  };
+  const create = await api('/sync/push', {
+    method: 'POST', token: bobTok, body: { categories: [cat] },
+  });
+  check('entry can create a new record',
+      create.data?.applied?.categories?.[0]?.status === 'applied');
+
+  const modify = await api('/sync/push', {
+    method: 'POST', token: bobTok,
+    body: { categories: [{ ...cat, nameEn: 'T2', updatedAt: new Date(Date.now() + 5000).toISOString() }] },
+  });
+  check('entry cannot modify an existing record (forbidden)',
+      modify.data?.applied?.categories?.[0]?.status === 'forbidden');
+
+  // Editor can still modify that record.
+  await api(`/users/${bobId}`, { method: 'PATCH', token: adminTok, body: { role: 'editor' } });
+  const edFix = await api('/sync/push', {
+    method: 'POST', token: bobTok,
+    body: { categories: [{ ...cat, nameEn: 'T3', updatedAt: new Date(Date.now() + 9000).toISOString() }] },
+  });
+  check('editor can modify an existing record',
+      edFix.data?.applied?.categories?.[0]?.status === 'applied');
+
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);
   process.exit(failures === 0 ? 0 : 1);
 };

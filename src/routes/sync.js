@@ -379,8 +379,10 @@ const selectOpeningBalanceStamp = db.prepare(
   'SELECT server_updated_at FROM cycle_opening_balances WHERE id = ?',
 );
 
-// Writes are restricted to admins and editors; viewers get 403.
-router.post('/push', requireRole('admin', 'editor'), (req, res) => {
+// Writes are restricted to admins, editors, and data-entry users; viewers
+// get 403. Data-entry users may only CREATE records, not modify existing ones
+// (enforced per-row below).
+router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
   const parsed = pushSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'invalid_body', issues: parsed.error.issues });
@@ -388,6 +390,7 @@ router.post('/push', requireRole('admin', 'editor'), (req, res) => {
   const { categories, counterparties, invoices, transactions, cycles, cycleOpeningBalances } = parsed.data;
   const serverNow = new Date().toISOString();
   const userId = req.user.id;
+  const isEntry = req.user.role === 'entry';
 
   const applied = {
     categories: [],
@@ -404,6 +407,11 @@ router.post('/push', requireRole('admin', 'editor'), (req, res) => {
       if (existing && existing.updated_at >= c.updatedAt) {
         const stamp = selectCategoryStamp.get(c.id).server_updated_at;
         applied.categories.push({ id: c.id, status: 'skipped', serverUpdatedAt: stamp });
+        continue;
+      }
+      if (isEntry && existing) {
+        const stamp = selectCategoryStamp.get(c.id).server_updated_at;
+        applied.categories.push({ id: c.id, status: 'forbidden', serverUpdatedAt: stamp });
         continue;
       }
       upsertCategory.run({
@@ -429,6 +437,11 @@ router.post('/push', requireRole('admin', 'editor'), (req, res) => {
         applied.counterparties.push({ id: cp.id, status: 'skipped', serverUpdatedAt: stamp });
         continue;
       }
+      if (isEntry && existing) {
+        const stamp = selectCounterpartyStamp.get(cp.id).server_updated_at;
+        applied.counterparties.push({ id: cp.id, status: 'forbidden', serverUpdatedAt: stamp });
+        continue;
+      }
       upsertCounterparty.run({
         id: cp.id,
         name: cp.name,
@@ -449,6 +462,11 @@ router.post('/push', requireRole('admin', 'editor'), (req, res) => {
       if (existing && existing.updated_at >= inv.updatedAt) {
         const stamp = selectInvoiceStamp.get(inv.id).server_updated_at;
         applied.invoices.push({ id: inv.id, status: 'skipped', serverUpdatedAt: stamp });
+        continue;
+      }
+      if (isEntry && existing) {
+        const stamp = selectInvoiceStamp.get(inv.id).server_updated_at;
+        applied.invoices.push({ id: inv.id, status: 'forbidden', serverUpdatedAt: stamp });
         continue;
       }
       upsertInvoice.run({
@@ -474,6 +492,11 @@ router.post('/push', requireRole('admin', 'editor'), (req, res) => {
       if (existing && existing.updated_at >= t.updatedAt) {
         const stamp = selectTxStamp.get(t.id).server_updated_at;
         applied.transactions.push({ id: t.id, status: 'skipped', serverUpdatedAt: stamp });
+        continue;
+      }
+      if (isEntry && existing) {
+        const stamp = selectTxStamp.get(t.id).server_updated_at;
+        applied.transactions.push({ id: t.id, status: 'forbidden', serverUpdatedAt: stamp });
         continue;
       }
       upsertTransaction.run({
@@ -508,6 +531,11 @@ router.post('/push', requireRole('admin', 'editor'), (req, res) => {
         applied.cycles.push({ id: cy.id, status: 'skipped', serverUpdatedAt: stamp });
         continue;
       }
+      if (isEntry && existing) {
+        const stamp = selectCycleStamp.get(cy.id).server_updated_at;
+        applied.cycles.push({ id: cy.id, status: 'forbidden', serverUpdatedAt: stamp });
+        continue;
+      }
       upsertCycle.run({
         id: cy.id,
         name: cy.name ?? null,
@@ -528,6 +556,11 @@ router.post('/push', requireRole('admin', 'editor'), (req, res) => {
       if (existing && existing.updated_at >= ob.updatedAt) {
         const stamp = selectOpeningBalanceStamp.get(ob.id).server_updated_at;
         applied.cycleOpeningBalances.push({ id: ob.id, status: 'skipped', serverUpdatedAt: stamp });
+        continue;
+      }
+      if (isEntry && existing) {
+        const stamp = selectOpeningBalanceStamp.get(ob.id).server_updated_at;
+        applied.cycleOpeningBalances.push({ id: ob.id, status: 'forbidden', serverUpdatedAt: stamp });
         continue;
       }
       upsertOpeningBalance.run({

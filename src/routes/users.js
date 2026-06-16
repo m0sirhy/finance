@@ -36,7 +36,7 @@ router.get('/', (_req, res) => {
 // Approve / re-role / (de)activate a user. Approving a pending account is just
 // `{ role: 'editor'|'viewer', status: 'active' }`.
 const patchSchema = z.object({
-  role: z.enum(['admin', 'editor', 'viewer']).optional(),
+  role: z.enum(['admin', 'editor', 'entry', 'viewer']).optional(),
   status: z.enum(['active', 'disabled']).optional(),
 });
 
