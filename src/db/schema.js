@@ -141,6 +141,23 @@ db.exec(`
     ON cycle_opening_balances(cycle_id);
 `);
 
+// ── Audit log (added 2026-06-13) ──────────────────────────────────────────
+// One row per applied mutation during /sync/push. Lets the app surface
+// "created by / last edited by" and a recent-activity feed.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id         TEXT PRIMARY KEY,
+    entity     TEXT NOT NULL,
+    entity_id  TEXT NOT NULL,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    action     TEXT NOT NULL,
+    at         TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_entity
+    ON audit_log(entity, entity_id, at);
+  CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
+`);
+
 // ── Users: roles & status (added 2026-06-13) ──────────────────────────────
 // role:   admin | editor | viewer   (NULL until an admin approves)
 // status: pending | active | disabled

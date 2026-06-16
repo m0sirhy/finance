@@ -104,6 +104,19 @@ const main = async () => {
   check('editor can modify an existing record',
       edFix.data?.applied?.categories?.[0]?.status === 'applied');
 
+  // 11. Audit log: the category above was created (by Bob) then edited (twice).
+  const audit = await api(`/audit?entity=category&id=${cat.id}`, { token: adminTok });
+  const entries = audit.data?.entries ?? [];
+  check('audit records the creation first', entries[0]?.action === 'create');
+  check('audit includes the actor name', typeof entries[0]?.userName === 'string');
+  check('audit last entry is an update', entries.at(-1)?.action === 'update');
+
+  // 12. Recent feed is admin-only.
+  const recentAdmin = await api('/audit/recent', { token: adminTok });
+  check('admin can read recent audit', recentAdmin.status === 200 && Array.isArray(recentAdmin.data?.entries));
+  const recentBob = await api('/audit/recent', { token: bobTok });
+  check('non-admin cannot read recent audit (403)', recentBob.status === 403);
+
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);
   process.exit(failures === 0 ? 0 : 1);
 };

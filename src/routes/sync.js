@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 
 import { db } from '../db/schema.js';
 import { requireAuth, requireActive, requireRole } from '../middleware/auth.js';
@@ -379,6 +380,18 @@ const selectOpeningBalanceStamp = db.prepare(
   'SELECT server_updated_at FROM cycle_opening_balances WHERE id = ?',
 );
 
+const insertAudit = db.prepare(
+  'INSERT INTO audit_log (id, entity, entity_id, user_id, action, at) VALUES (?, ?, ?, ?, ?, ?)',
+);
+
+// `existing` is the pre-upsert row (null = create); `deletedAt` non-null marks
+// a soft-delete. Soft-deletes can look like updates, so check that first.
+function auditAction(existing, deletedAt) {
+  if (!existing) return 'create';
+  if (deletedAt) return 'delete';
+  return 'update';
+}
+
 // Writes are restricted to admins, editors, and data-entry users; viewers
 // get 403. Data-entry users may only CREATE records, not modify existing ones
 // (enforced per-row below).
@@ -391,6 +404,13 @@ router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
   const serverNow = new Date().toISOString();
   const userId = req.user.id;
   const isEntry = req.user.role === 'entry';
+
+  function recordAudit(entity, entityId, existing, deletedAt) {
+    insertAudit.run(
+      randomUUID(), entity, entityId, userId,
+      auditAction(existing, deletedAt), serverNow,
+    );
+  }
 
   const applied = {
     categories: [],
@@ -427,6 +447,7 @@ router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
         updated_at: c.updatedAt,
         server_updated_at: serverNow,
       });
+      recordAudit('category', c.id, existing, c.deletedAt);
       applied.categories.push({ id: c.id, status: 'applied', serverUpdatedAt: serverNow });
     }
 
@@ -454,6 +475,7 @@ router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
         updated_at: cp.updatedAt,
         server_updated_at: serverNow,
       });
+      recordAudit('counterparty', cp.id, existing, cp.deletedAt);
       applied.counterparties.push({ id: cp.id, status: 'applied', serverUpdatedAt: serverNow });
     }
 
@@ -484,6 +506,7 @@ router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
         updated_at: inv.updatedAt,
         server_updated_at: serverNow,
       });
+      recordAudit('invoice', inv.id, existing, inv.deletedAt);
       applied.invoices.push({ id: inv.id, status: 'applied', serverUpdatedAt: serverNow });
     }
 
@@ -519,6 +542,7 @@ router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
         updated_at: t.updatedAt,
         server_updated_at: serverNow,
       });
+      recordAudit('transaction', t.id, existing, t.deletedAt);
       applied.transactions.push({ id: t.id, status: 'applied', serverUpdatedAt: serverNow });
     }
 
@@ -548,6 +572,7 @@ router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
         updated_at: cy.updatedAt,
         server_updated_at: serverNow,
       });
+      recordAudit('cycle', cy.id, existing, cy.deletedAt);
       applied.cycles.push({ id: cy.id, status: 'applied', serverUpdatedAt: serverNow });
     }
 
@@ -574,6 +599,7 @@ router.post('/push', requireRole('admin', 'editor', 'entry'), (req, res) => {
         updated_at: ob.updatedAt,
         server_updated_at: serverNow,
       });
+      recordAudit('opening_balance', ob.id, existing, ob.deletedAt);
       applied.cycleOpeningBalances.push({ id: ob.id, status: 'applied', serverUpdatedAt: serverNow });
     }
   });
